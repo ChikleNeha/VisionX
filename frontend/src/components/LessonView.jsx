@@ -22,10 +22,11 @@ export default function LessonView({ onStartQuiz }) {
   const [interruptInput, setInterruptInput] = useState('')
   const [announcement, setAnnouncement] = useState('')
 
-  const chatEndRef      = useRef(null)
+  const chatEndRef       = useRef(null)
   const lessonContextRef = useRef('')
   const cancelStreamRef  = useRef(null)  // cancel SSE stream
   const lastStatusRef    = useRef('')    // avoid repeating same status aloud
+  const isListeningRef   = useRef(false) // always-current mirror of stt.isListening
 
   const mod = MODULES.find(m => m.id === currentModule)
 
@@ -34,6 +35,7 @@ export default function LessonView({ onStartQuiz }) {
   }, [chatHistory, streamedText])
 
   useEffect(() => { setLessonState(state) }, [state])
+  useEffect(() => { isListeningRef.current = stt.isListening }, [stt.isListening])
 
   // ── Speak a status message — but only if it changed ───────────────────────
   const announceStatus = useCallback((msg) => {
@@ -142,6 +144,13 @@ export default function LessonView({ onStartQuiz }) {
           && state === STATES.TEACHING && !inInput) {
         e.preventDefault(); handleInterrupt(); return
       }
+      // Space or Enter while mic is recording → stop and submit
+      if ((e.code === 'Space' || e.key === 'Enter')
+          && state === STATES.INTERRUPTED && isListeningRef.current && !inInput) {
+        e.preventDefault()
+        stt.stopListening()
+        return
+      }
       if (!inInput) {
         if (e.key === 'r' || e.key === 'R') {
           e.preventDefault()
@@ -206,16 +215,22 @@ export default function LessonView({ onStartQuiz }) {
       speakAndStore(response)
 
       if (lesson_adjustment) {
-        setTimeout(async () => {
-          announceStatus('Lesson update ho rahi hai...')
-          const newLesson = await API.getLesson(sessionId, currentModule, updated_difficulty || difficultyLevel)
-          lessonContextRef.current = newLesson.data.content
-          setChatHistory(prev => [...prev, {
-            role: 'assistant', content: newLesson.data.content, type: 'lesson', id: Date.now()
-          }])
-          await waitUntilDone(3000)
-          speakAndStore(newLesson.data.content)
-        }, 500)
+        // Wait for answer then play updated lesson
+        await waitUntilDone(30000)
+        announceStatus('Lesson update ho rahi hai...')
+        const newLesson = await API.getLesson(sessionId, currentModule, updated_difficulty || difficultyLevel)
+        lessonContextRef.current = newLesson.data.content
+        setChatHistory(prev => [...prev, {
+          role: 'assistant', content: newLesson.data.content, type: 'lesson', id: Date.now()
+        }])
+        await waitUntilDone(3000)
+        speakAndStore(`Lesson resume ho rahi hai. ${newLesson.data.content}`)
+      } else {
+        // Wait for answer to finish, then resume lesson from where it was
+        await waitUntilDone(30000)
+        if (lessonContextRef.current) {
+          speakAndStore(`Theek hai! Ab lesson resume karte hain. ${lessonContextRef.current}`)
+        }
       }
 
       setState(STATES.TEACHING)
@@ -330,7 +345,7 @@ export default function LessonView({ onStartQuiz }) {
               <button
                 onClick={toggleMic}
                 disabled={state === STATES.ANSWERING}
-                aria-label={stt.isListening ? 'Recording band karo' : 'Apna sawaal bolo (mic)'}
+                aria-label={stt.isListening ? 'Space ya Enter dabao submit karne ke liye' : 'Apna sawaal bolo (mic)'}
                 aria-pressed={stt.isListening}
                 className={`w-20 h-20 rounded-full text-4xl flex items-center justify-center
                   transition-all duration-200 relative
@@ -355,7 +370,7 @@ export default function LessonView({ onStartQuiz }) {
                   <div className="flex items-end gap-0.5 h-5" aria-hidden="true">
                     {[...Array(5)].map((_, i) => <span key={i} className="wave-bar" />)}
                   </div>
-                  <span className="text-accent text-sm font-medium">Sun raha hoon...</span>
+                  <span className="text-accent text-sm font-medium">Sun raha hoon... Space ya Enter dabao submit karne ke liye</span>
                 </div>
               )}
               {stt.transcript && !stt.isListening && (

@@ -15,6 +15,7 @@ export function useSTT() {
   const chunksRef        = useRef([])
   const onResultRef      = useRef(null)
   const stoppedRef       = useRef(false)   // prevents double-submit
+  const transcriptRef    = useRef('')      // mirrors transcript state, readable synchronously
 
   const stopListening = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -31,6 +32,7 @@ export function useSTT() {
     onResultRef.current = onFinalResult
     stoppedRef.current  = false
     chunksRef.current   = []
+    transcriptRef.current = ''
     setTranscript('')
 
     let stream
@@ -63,8 +65,9 @@ export function useSTT() {
       if (chunksRef.current.length === 0) return
 
       const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
-      if (blob.size < 500) {
+      if (blob.size < 100) {
         console.warn('Audio blob too small, skipping STT')
+        onResultRef.current?.('')  // fire callback with empty so caller can handle
         return
       }
 
@@ -82,15 +85,18 @@ export function useSTT() {
         console.log('[STT] Voxtral transcript:', text)
 
         if (text) {
+          transcriptRef.current = text
           setTranscript(text)
           onResultRef.current?.(text)
+        } else {
+          onResultRef.current?.('')
         }
       } catch (err) {
         console.error('[STT] Voxtral error:', err.response?.data || err.message)
       }
     }
 
-    recorder.start()
+    recorder.start(100)  // collect chunks every 100ms — data available even on early stop
     setIsListening(true)
     console.log('[STT] Recording started')
   }, [isSupported])
@@ -109,6 +115,7 @@ export function useSTT() {
 
   return {
     transcript,
+    transcriptRef,    // readable synchronously without re-render
     isListening,
     isSupported,
     startListening,
