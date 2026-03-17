@@ -81,7 +81,6 @@ async def _stream_lesson(body: LessonRequest):
     }
 
     # Run generation in background task, send status ticks while waiting
-    import asyncio
     result_container = {}
     error_container = {}
 
@@ -217,7 +216,6 @@ async def prewarm_lessons(body: LessonRequest):
     Called after first lesson loads — silently generates remaining modules
     in the background so they're cached and instant when user navigates to them.
     """
-    import asyncio
     from ..services.curriculum import MODULES
 
     async def generate_one(module_id: int):
