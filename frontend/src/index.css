@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-size: 18px;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-size: var(--font-size);
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #0a0a0f;
+    color: #e8e8f0;
+    font-family: 'DM Sans', sans-serif;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  /* NEVER remove focus rings — accessibility critical */
+  :focus-visible {
+    outline: 3px solid #00e5a0 !important;
+    outline-offset: 3px !important;
+    border-radius: 4px;
+  }
+
+  /* Skip link */
+  .skip-link {
+    position: absolute;
+    top: -100px;
+    left: 1rem;
+    background: #00e5a0;
+    color: #0a0a0f;
+    padding: 0.5rem 1rem;
+    border-radius: 0 0 8px 8px;
+    font-weight: 700;
+    z-index: 9999;
+    font-family: 'DM Sans', sans-serif;
+    transition: top 0.2s;
+  }
+
+  .skip-link:focus {
+    top: 0;
+  }
+
+  /* All interactive elements minimum 44x44px tap target */
+  button, [role="button"], a, input, textarea, select {
+    min-height: 44px;
+  }
+
+  /* High contrast mode */
+  body.high-contrast {
+    --tw-bg-opacity: 1;
+    background-color: #000 !important;
+    color: #FFD700 !important;
+  }
+
+  body.high-contrast * {
+    border-color: #FFD700 !important;
+  }
+
+  body.high-contrast button,
+  body.high-contrast [role="button"] {
+    background-color: #000 !important;
+    color: #FFD700 !important;
+    border: 2px solid #FFD700 !important;
+  }
+
+  body.high-contrast .bg-card,
+  body.high-contrast .bg-surface {
+    background-color: #111 !important;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-accent text-ink font-semibold px-6 py-3 rounded-xl 
+           hover:bg-opacity-90 transition-all duration-200 
+           focus-visible:ring-2 focus-visible:ring-accent
+           disabled:opacity-40 disabled:cursor-not-allowed
+           min-h-[44px] flex items-center justify-center gap-2;
+  }
+
+  .btn-ghost {
+    @apply border border-border text-text px-5 py-3 rounded-xl
+           hover:border-accent hover:text-accent transition-all duration-200
+           min-h-[44px] flex items-center justify-center gap-2;
+  }
+
+  .card {
+    @apply bg-card border border-border rounded-2xl p-6;
+  }
+
+  .badge {
+    @apply text-xs font-mono px-2 py-1 rounded-md;
+  }
+}
+
+/* Listening animation */
+@keyframes listeningPulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+.listening-pulse {
+  animation: listeningPulse 1s ease-in-out infinite;
+}
+
+/* Waveform bars for voice visualization */
+.wave-bar {
+  display: inline-block;
+  width: 4px;
+  border-radius: 2px;
+  background: #00e5a0;
+  animation: wave 1s ease-in-out infinite;
+}
+.wave-bar:nth-child(2) { animation-delay: 0.1s; }
+.wave-bar:nth-child(3) { animation-delay: 0.2s; }
+.wave-bar:nth-child(4) { animation-delay: 0.3s; }
+.wave-bar:nth-child(5) { animation-delay: 0.4s; }
+
+@keyframes wave {
+  0%, 100% { height: 8px; }
+  50% { height: 24px; }
+}
