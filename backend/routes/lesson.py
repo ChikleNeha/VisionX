@@ -36,15 +36,15 @@ async def _stream_lesson(body: LessonRequest):
         payload = json.dumps({"type": event, "text": data})
         return f"data: {payload}\n\n"
 
-    # ── Check cache first ────────────────────────────────────────────────────
+    # ── Check cache — by module_id + difficulty (not session_id) ──────────────
     cached_content = None
     async for db in get_db():
         rows = await db.execute_fetchall(
             """SELECT content FROM lessons
-               WHERE session_id = ? AND module_id = ? AND difficulty = ?
+               WHERE module_id = ? AND difficulty = ?
                AND generated_at > datetime('now', '-24 hours')
                ORDER BY generated_at DESC LIMIT 1""",
-            (body.session_id, body.module_id, body.difficulty)
+            (body.module_id, body.difficulty)
         )
         if rows:
             cached_content = rows[0][0]
@@ -119,8 +119,13 @@ async def _stream_lesson(body: LessonRequest):
         yield sse("error", "Koi content nahi mila. Dobara try karo.")
         return
 
-    # Cache in DB
+    # Cache in DB — store so any future session can reuse it
     async for db in get_db():
+        # Delete old cache for same module+difficulty first
+        await db.execute(
+            "DELETE FROM lessons WHERE module_id = ? AND difficulty = ?",
+            (body.module_id, body.difficulty)
+        )
         await db.execute(
             "INSERT INTO lessons (session_id, module_id, difficulty, content) VALUES (?, ?, ?, ?)",
             (body.session_id, body.module_id, body.difficulty, content)
@@ -162,10 +167,10 @@ async def get_lesson(body: LessonRequest):
     async for db in get_db():
         cached = await db.execute_fetchall(
             """SELECT content FROM lessons
-               WHERE session_id = ? AND module_id = ? AND difficulty = ?
+               WHERE module_id = ? AND difficulty = ?
                AND generated_at > datetime('now', '-24 hours')
                ORDER BY generated_at DESC LIMIT 1""",
-            (body.session_id, body.module_id, body.difficulty)
+            (body.module_id, body.difficulty)
         )
         if cached:
             return LessonResponse(content=cached[0][0], difficulty=body.difficulty, module_id=body.module_id)
@@ -204,3 +209,53 @@ async def get_lesson(body: LessonRequest):
         break
 
     return LessonResponse(content=content, difficulty=body.difficulty, module_id=body.module_id)
+
+
+@router.post("/lesson/prewarm")
+async def prewarm_lessons(body: LessonRequest):
+    """
+    Called after first lesson loads — silently generates remaining modules
+    in the background so they're cached and instant when user navigates to them.
+    """
+    import asyncio
+    from ..services.curriculum import MODULES
+
+    async def generate_one(module_id: int):
+        try:
+            async for db in get_db():
+                rows = await db.execute_fetchall(
+                    "SELECT id FROM lessons WHERE module_id = ? AND difficulty = ? AND generated_at > datetime('now', '-24 hours')",
+                    (module_id, body.difficulty)
+                )
+                if rows:
+                    return  # already cached
+                break
+
+            graph = await get_graph()
+            mod   = get_module(module_id)
+            cfg   = {"configurable": {"thread_id": f"prewarm-{module_id}-{body.difficulty}"}}
+            state = {
+                "messages": [{"role": "user", "content": f"Teach me {mod['title']}"}],
+                "session_id": body.session_id, "module_id": module_id,
+                "module_title": mod["title"], "module_topics": mod["topics"],
+                "lesson_context": "", "difficulty": body.difficulty,
+                "updated_difficulty": None, "lesson_adjustment": False,
+                "intent": "lesson", "response": "", "quiz_questions": [],
+            }
+            result  = await graph.ainvoke(state, config=cfg)
+            content = result.get("response", "")
+            if content:
+                async for db in get_db():
+                    await db.execute("DELETE FROM lessons WHERE module_id = ? AND difficulty = ?", (module_id, body.difficulty))
+                    await db.execute("INSERT INTO lessons (session_id, module_id, difficulty, content) VALUES (?, ?, ?, ?)",
+                        (body.session_id, module_id, body.difficulty, content))
+                    await db.commit()
+                    break
+        except Exception as e:
+            print(f"Prewarm failed for module {module_id}: {e}")
+
+    # Skip current module (already loaded), generate rest in background
+    other_modules = [m for m in range(1, 6) if m != body.module_id]
+    asyncio.create_task(asyncio.gather(*[generate_one(m) for m in other_modules]))
+
+    return {"status": "prewarm started", "modules": other_modules}

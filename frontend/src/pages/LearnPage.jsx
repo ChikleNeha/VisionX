@@ -13,31 +13,14 @@ export default function LearnPage() {
 
   const [view, setView]               = useState('lesson')
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  // audioUnlocked: false = show unlock gate, true = show lesson
-  const [audioUnlocked, setAudioUnlocked] = useState(false)
-  const startBtnRef = useRef(null)
   const navigate    = useNavigate()
 
   useEffect(() => {
     if (!username) navigate('/')
   }, [username])
 
-  // Auto-focus the start button so blind users can press Enter/Space immediately
+  // Global shortcuts
   useEffect(() => {
-    if (!audioUnlocked) {
-      setTimeout(() => startBtnRef.current?.focus(), 100)
-    }
-  }, [audioUnlocked])
-
-  const handleUnlock = async () => {
-    // This is called directly from a click/keypress — guaranteed sync gesture
-    await unlockAudio()
-    setAudioUnlocked(true)
-  }
-
-  // Global shortcuts — only active after unlock
-  useEffect(() => {
-    if (!audioUnlocked) return
     const handler = (e) => {
       unlockAudio()
       const tag = document.activeElement.tagName
@@ -69,61 +52,13 @@ export default function LearnPage() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [currentModule, audioUnlocked])
+  }, [currentModule])
 
   const handleSelectModule = (mod) => {
     setCurrentModule(mod.id)
     setView('lesson')
   }
 
-  // ── Audio unlock gate ──────────────────────────────────────────────────────
-  if (!audioUnlocked) {
-    return (
-      <div
-        className="flex h-screen bg-ink items-center justify-center"
-        role="main"
-        aria-label="Audio activate karo"
-      >
-        <div className="text-center max-w-sm px-6">
-          <div className="flex items-end justify-center gap-0.5 h-12 mb-6" aria-hidden="true">
-            {[...Array(7)].map((_, i) => (
-              <span key={i} className="wave-bar" style={{ animationDelay: `${i * 0.1}s` }} />
-            ))}
-          </div>
-
-          <h1 className="font-display text-3xl font-bold text-text mb-3">
-            Access<span className="text-accent">Code</span>
-          </h1>
-
-          <p className="text-muted mb-2 text-sm">
-            Namaste, <span className="text-text font-medium">{username}</span>!
-          </p>
-          <p className="text-muted mb-8 text-sm leading-relaxed">
-            Audio shuru karne ke liye Enter ya Space dabao.
-          </p>
-
-          <button
-            ref={startBtnRef}
-            onClick={handleUnlock}
-            onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && handleUnlock()}
-            className="btn-primary text-xl px-10 py-4 animate-glow"
-            aria-label="Audio shuru karo aur lesson sunna shuru karo. Enter ya Space dabao."
-          >
-            🔊 Lesson Shuru Karo
-          </button>
-
-          <p className="text-muted text-xs mt-6">
-            <kbd className="bg-card border border-border rounded px-2 font-mono text-accent">Enter</kbd>
-            {' '}ya{' '}
-            <kbd className="bg-card border border-border rounded px-2 font-mono text-accent">Space</kbd>
-            {' '}dabao
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Main learning UI ───────────────────────────────────────────────────────
   return (
     <div className="flex h-screen bg-ink overflow-hidden" role="application" aria-label="AccessCode learning environment">
 

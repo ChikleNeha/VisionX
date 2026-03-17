@@ -70,6 +70,8 @@ export default function HomePage() {
     stt.stopListening()
     setPhase('done')
     await speak(`Wapas swagat hai ${username}! Lesson abhi shuru hoti hai.`)
+    sessionStorage.setItem('ac_audio_unlocked', 'true')
+    sessionStorage.setItem('ac_audio_unlocked', 'true')
     navigate('/learn')
   }
 
@@ -125,6 +127,7 @@ export default function HomePage() {
     try { await API.createUser(n) } catch {}
     saveUsername(n)
     await speak(`Swagat hai ${n}! Lesson shuru ho rahi hai.`)
+    sessionStorage.setItem('ac_audio_unlocked', 'true')
     navigate('/learn')
   }
 

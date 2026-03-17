@@ -104,6 +104,7 @@ export default function LessonView({ onStartQuiz }) {
 
           // Save progress (non-blocking)
           API.updateProgress(sessionId, currentModule, { status: 'in_progress' }).catch(() => {})
+          API.prewarmLessons(sessionId, currentModule, difficultyLevel)
 
           // Small buffer only if something was actually speaking (fresh lesson status TTS)
           // For cached lessons this resolves instantly since nothing is playing

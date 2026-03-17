@@ -113,6 +113,14 @@ export const API = {
       wrong_topics: wrongTopics
     }),
 
+  // Pre-warm all lessons in background after first one loads
+  prewarmLessons: (sessionId, currentModuleId, difficulty) =>
+    api.post('/lesson/prewarm', {
+      session_id: sessionId,
+      module_id: currentModuleId,
+      difficulty
+    }).catch(() => {}),  // fire and forget — ignore errors
+
   // TTS proxy
   tts: (text, speed = 1.0) =>
     api.post('/tts', { text, speed }, { responseType: 'blob' }),
