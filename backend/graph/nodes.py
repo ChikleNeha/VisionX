@@ -6,7 +6,9 @@ from langchain_core.messages import HumanMessage, AIMessage
 from .state import TutorState
 from services.prompts import TUTOR_SYSTEM, LESSON_SYSTEM, QUIZ_SYSTEM, ROUTER_SYSTEM
 
-BYTEZ_KEY = os.getenv("BYTEZ_API_KEY", "bb8f09ec517a0c1701738d4a6e3872cc")
+BYTEZ_KEY = os.getenv("BYTEZ_API_KEY")
+if not BYTEZ_KEY:
+    raise RuntimeError("BYTEZ_API_KEY not set in .env file")
 _sdk = Bytez(BYTEZ_KEY)
 
 # gpt-4o for tutor (quality answers), gpt-4o-mini for lessons/quiz (speed)

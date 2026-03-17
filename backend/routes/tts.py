@@ -7,7 +7,9 @@ from models.schemas import TTSRequest
 
 router = APIRouter()
 
-BYTEZ_KEY = os.getenv("BYTEZ_API_KEY", "bb8f09ec517a0c1701738d4a6e3872cc")
+BYTEZ_KEY = os.getenv("BYTEZ_API_KEY")
+if not BYTEZ_KEY:
+    raise RuntimeError("BYTEZ_API_KEY not set in .env file")
 _sdk = Bytez(BYTEZ_KEY)
 _tts_model = _sdk.model("openai/tts-1-hd")
 _executor = ThreadPoolExecutor(max_workers=4)
