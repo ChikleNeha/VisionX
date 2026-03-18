@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from database.db import init_db
-from routes import users, progress, lesson, tutor, quiz, tts, stt
+from routes import users, progress, lesson, tutor, quiz, tts, stt, code
 
 app = FastAPI(
     title="AccessCode API",
@@ -40,3 +40,4 @@ app.include_router(tutor.router, prefix="/api", tags=["Tutor"])
 app.include_router(quiz.router, prefix="/api", tags=["Quiz"])
 app.include_router(tts.router, prefix="/api", tags=["TTS"])
 app.include_router(stt.router, prefix="/api", tags=["STT"])
+app.include_router(code.router, prefix="/api", tags=["Code"])

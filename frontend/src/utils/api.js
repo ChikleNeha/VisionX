@@ -113,6 +113,10 @@ export const API = {
       wrong_topics: wrongTopics
     }),
 
+  // Code execution — speech to Python to output
+  runCode: (spokenText, moduleId) =>
+    api.post('/code/run', { spoken_text: spokenText, current_module: moduleId }),
+
   // Pre-warm all lessons in background after first one loads
   prewarmLessons: (sessionId, currentModuleId, difficulty) =>
     api.post('/lesson/prewarm', {

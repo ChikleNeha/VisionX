@@ -6,12 +6,13 @@ import { MODULES, SHORTCUTS } from '../data/curriculum'
 import ModuleSidebar from '../components/ModuleSidebar'
 import LessonView from '../components/LessonView'
 import QuizView from '../components/QuizView'
+import CodeView from '../components/CodeView'
 
 export default function LearnPage() {
   const { username, currentModule, setCurrentModule, speakAndStore, tts,
           toggleHighContrast, changeFontSize, tts: { setRate } } = useApp()
 
-  const [view, setView]               = useState('lesson')
+  const [view, setView]               = useState('lesson') // 'lesson' | 'quiz' | 'code'
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const navigate    = useNavigate()
 
@@ -31,6 +32,7 @@ export default function LearnPage() {
         speakAndStore(`Shortcuts: ${SHORTCUTS.map(s => `${s.keys}: ${s.action}`).join('. ')}`)
       }
       if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); setView('quiz') }
+      if (e.key === 'c' || e.key === 'C') { e.preventDefault(); setView('code') }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
         const next = Math.min(currentModule + 1, MODULES.length)
@@ -90,6 +92,11 @@ export default function LearnPage() {
               className={`text-sm px-4 py-2 rounded-lg transition-colors ${view === 'quiz' ? 'bg-accent/10 text-accent border border-accent/30' : 'text-muted hover:text-text'}`}>
               📝 Quiz (Q)
             </button>
+            <button onClick={() => { setView('code') }}
+              aria-pressed={view === 'code'}
+              className={`text-sm px-4 py-2 rounded-lg transition-colors ${view === 'code' ? 'bg-accent/10 text-accent border border-accent/30' : 'text-muted hover:text-text'}`}>
+              ⚡ Code
+            </button>
           </nav>
 
           <div className="flex items-center gap-2">
@@ -109,10 +116,9 @@ export default function LearnPage() {
         </header>
 
         <main id="main-content" className="flex-1 overflow-hidden" role="main">
-          {view === 'lesson'
-            ? <LessonView onStartQuiz={() => setView('quiz')} />
-            : <QuizView onBack={() => setView('lesson')} />
-          }
+          {view === 'lesson' && <LessonView onStartQuiz={() => setView('quiz')} />}
+          {view === 'quiz'   && <QuizView onBack={() => setView('lesson')} />}
+          {view === 'code'   && <CodeView />}
         </main>
 
         <footer className="px-5 py-2 border-t border-border bg-surface" role="contentinfo">
@@ -120,6 +126,7 @@ export default function LearnPage() {
             <kbd className="bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">J/F</kbd> Interrupt ·
             <kbd className="ml-2 bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">R</kbd> Replay ·
             <kbd className="ml-2 bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">Q</kbd> Quiz ·
+            <kbd className="ml-2 bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">C</kbd> Code ·
             <kbd className="ml-2 bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">N/P</kbd> Next/Prev ·
             <kbd className="ml-2 bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">Esc</kbd> Stop ·
             <kbd className="ml-2 bg-card border border-border rounded px-1.5 font-mono text-accent text-xs">H</kbd> Help
