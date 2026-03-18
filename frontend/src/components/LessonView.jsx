@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { waitUntilDone } from '../hooks/useTTS'
+import { browserSpeak, browserStop } from '../utils/browserTTS'
 import { useApp } from '../context/AppContext'
 import { MODULES } from '../data/curriculum'
 import { API } from '../utils/api'
@@ -23,16 +24,29 @@ export default function LessonView({ onStartQuiz }) {
   const [announcement, setAnnouncement] = useState('')
 
   const chatEndRef       = useRef(null)
+  const chatContainerRef = useRef(null)  // scrollable chat div
   const lessonContextRef = useRef('')
   const cancelStreamRef  = useRef(null)  // cancel SSE stream
   const lastStatusRef    = useRef('')    // avoid repeating same status aloud
-  const isListeningRef   = useRef(false) // always-current mirror of stt.isListening
+  const isListeningRef      = useRef(false) // always-current mirror of stt.isListening
+  const resumeFromRef       = useRef('')    // text to resume from after interrupt
+  const cancelledRef        = useRef(false) // set true if interrupted again mid-answer
 
   const mod = MODULES.find(m => m.id === currentModule)
 
+  const scrollToBottom = useCallback(() => {
+    // Wait one animation frame so DOM has painted the new message
+    requestAnimationFrame(() => {
+      if (chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
+      }
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    })
+  }, [])
+
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [chatHistory, streamedText])
+    scrollToBottom()
+  }, [chatHistory, streamedText, state])
 
   useEffect(() => { setLessonState(state) }, [state])
   useEffect(() => { isListeningRef.current = stt.isListening }, [stt.isListening])
@@ -44,15 +58,8 @@ export default function LessonView({ onStartQuiz }) {
     setStatusMsg(msg)
     setAnnouncement(msg)
     // Speak short status messages without stopping current audio
-    // Use browser TTS for these (instant, no latency) — they are short UI hints
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel()
-      const utt = new SpeechSynthesisUtterance(msg)
-      utt.rate = 1.15
-      utt.volume = 0.8
-      window.speechSynthesis.speak(utt)
-    }
-  }, [])
+    // Use browserSpeak with Hindi voice priority (hi-IN → en-IN → default)
+    browserSpeak(msg, null, 1.1)  }, [])
 
   // ── Auto-start lesson on mount and on module change ────────────────────────
   useEffect(() => {
@@ -102,7 +109,7 @@ export default function LessonView({ onStartQuiz }) {
           lastStatusRef.current = ''
 
           // Kill any status speech immediately
-          if (window.speechSynthesis) window.speechSynthesis.cancel()
+          browserStop()
 
           // Save progress (non-blocking)
           API.updateProgress(sessionId, currentModule, { status: 'in_progress' }).catch(() => {})
@@ -156,7 +163,7 @@ export default function LessonView({ onStartQuiz }) {
           e.preventDefault()
           if (lessonContextRef.current) { tts.stop(); tts.speak(lessonContextRef.current) }
         }
-        if (e.key === 'Escape') { tts.stop(); if (window.speechSynthesis) window.speechSynthesis.cancel() }
+        if (e.key === 'Escape') { tts.stop(); browserStop() }
         if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); onStartQuiz() }
         if (e.key === 'h' || e.key === 'H') {
           e.preventDefault()
@@ -170,11 +177,14 @@ export default function LessonView({ onStartQuiz }) {
 
   // ── Interrupt ──────────────────────────────────────────────────────────────
   const handleInterrupt = useCallback(async () => {
+    cancelledRef.current = true   // cancel any in-progress answer resume
     tts.stop()
-    if (window.speechSynthesis) window.speechSynthesis.cancel()
+    browserStop()
     setState(STATES.INTERRUPTED)
     setInterruptInput('')
     setAnnouncement('Lesson ruka. Sawaal bolo.')
+    // Store current lesson context for resume — we'll replay from beginning of current topic
+    resumeFromRef.current = lessonContextRef.current
 
     await tts.speak('Haan bolo, kya poochna hai?')
     await waitUntilDone(8000)
@@ -191,10 +201,12 @@ export default function LessonView({ onStartQuiz }) {
   // ── Submit question ────────────────────────────────────────────────────────
   const submitQuestion = async (question) => {
     if (!question?.trim()) return
+    cancelledRef.current = false   // new question — reset cancel flag
     stt.stopListening()
     setChatHistory(prev => [...prev, { role: 'user', content: question, type: 'question', id: Date.now() }])
     setInterruptInput('')
     setState(STATES.ANSWERING)
+    setTimeout(scrollToBottom, 50)
     announceStatus('Sawaal AI ko bheja ja raha hai...')
 
     try {
@@ -212,28 +224,39 @@ export default function LessonView({ onStartQuiz }) {
       }])
       setStatusMsg('')
       setAnnouncement('')
+      scrollToBottom()
+      setTimeout(scrollToBottom, 100)
+
+      // Speak answer — then wait for it to fully finish before resuming
       speakAndStore(response)
 
-      if (lesson_adjustment) {
-        // Wait for answer then play updated lesson
-        await waitUntilDone(30000)
-        announceStatus('Lesson update ho rahi hai...')
-        const newLesson = await API.getLesson(sessionId, currentModule, updated_difficulty || difficultyLevel)
-        lessonContextRef.current = newLesson.data.content
-        setChatHistory(prev => [...prev, {
-          role: 'assistant', content: newLesson.data.content, type: 'lesson', id: Date.now()
-        }])
-        await waitUntilDone(3000)
-        speakAndStore(`Lesson resume ho rahi hai. ${newLesson.data.content}`)
-      } else {
-        // Wait for answer to finish, then resume lesson from where it was
-        await waitUntilDone(30000)
-        if (lessonContextRef.current) {
-          speakAndStore(`Theek hai! Ab lesson resume karte hain. ${lessonContextRef.current}`)
+      // Give TTS 800ms to start fetching+playing before we poll isSpeakingNow
+      await new Promise(r => setTimeout(r, 800))
+      // Now wait for answer audio to fully complete
+      await waitUntilDone(60000)
+
+      // Only resume lesson if not cancelled/interrupted again
+      if (!cancelledRef.current) {
+        setState(STATES.TEACHING)
+
+        if (lesson_adjustment) {
+          announceStatus('Lesson update ho rahi hai...')
+          const newLesson = await API.getLesson(sessionId, currentModule, updated_difficulty || difficultyLevel)
+          lessonContextRef.current = newLesson.data.content
+          setChatHistory(prev => [...prev, {
+            role: 'assistant', content: newLesson.data.content, type: 'lesson', id: Date.now()
+          }])
+          await new Promise(r => setTimeout(r, 800))
+          await waitUntilDone(10000)
+          speakAndStore(`Lesson resume ho rahi hai. ${newLesson.data.content}`)
+        } else {
+          // Resume lesson from where it was interrupted
+          const resumeText = resumeFromRef.current || lessonContextRef.current
+          if (resumeText) {
+            speakAndStore(`Wahan se shuru karte hain jahan ruke the. ${resumeText}`)
+          }
         }
       }
-
-      setState(STATES.TEACHING)
     } catch {
       setState(STATES.INTERRUPTED)
       speakAndStore('Kuch problem aayi. Dobara try karo.')
@@ -280,8 +303,11 @@ export default function LessonView({ onStartQuiz }) {
       {/* Accessible live region */}
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{announcement}</div>
 
-      {/* Main content area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4"
+      {/* Main content area — extra padding when bottom panel is tall */}
+      <div ref={chatContainerRef}
+        className={`flex-1 overflow-y-auto p-6 space-y-4 ${
+          state === STATES.INTERRUPTED || state === STATES.ANSWERING ? 'pb-72' : 'pb-6'
+        }`}
         role="log" aria-label="Lesson aur conversation" aria-live="polite">
 
         {/* ── LOADING: status + streaming text ── */}
@@ -335,8 +361,8 @@ export default function LessonView({ onStartQuiz }) {
               <span className="w-2 h-2 bg-warn rounded-full animate-pulse" aria-hidden="true" />
               <p className="text-warn text-sm font-medium">
                 {state === STATES.ANSWERING
-                  ? (statusMsg || 'Jawab aa raha hai...')
-                  : 'Lesson ruka — sawaal bolo'}
+                  ? (statusMsg || 'Jawab aa raha hai... sunte raho')
+                  : 'Lesson ruka — sawaal bolo (Space dabao submit karne ke liye)'}
               </p>
             </div>
 
@@ -352,7 +378,7 @@ export default function LessonView({ onStartQuiz }) {
                   ${stt.isListening
                     ? 'bg-danger text-white shadow-lg shadow-danger/40 listening-pulse'
                     : state === STATES.ANSWERING
-                      ? 'bg-card border-2 border-border text-muted opacity-50 cursor-not-allowed'
+                      ? 'bg-card border-2 border-border text-muted opacity-30 cursor-not-allowed'
                       : 'bg-accent/10 border-2 border-accent text-accent hover:bg-accent/20'
                   }`}
               >

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from database.db import get_db
 from models.schemas import LessonRequest, LessonResponse
@@ -210,50 +210,69 @@ async def get_lesson(body: LessonRequest):
     return LessonResponse(content=content, difficulty=body.difficulty, module_id=body.module_id)
 
 
+async def _generate_one(session_id: str, module_id: int, difficulty: str):
+    """Background task — generate and cache one lesson silently."""
+    try:
+        # Skip if already cached
+        async for db in get_db():
+            rows = await db.execute_fetchall(
+                "SELECT id FROM lessons WHERE module_id = ? AND difficulty = ? AND generated_at > datetime('now', '-24 hours')",
+                (module_id, difficulty)
+            )
+            if rows:
+                print(f"Prewarm: module {module_id} already cached, skipping")
+                return
+            break
+
+        print(f"Prewarm: generating module {module_id} at {difficulty}...")
+        graph = await get_graph()
+        mod   = get_module(module_id)
+        cfg   = {"configurable": {"thread_id": f"prewarm-{module_id}-{difficulty}"}}
+        state = {
+            "messages": [{"role": "user", "content": f"Teach me {mod['title']}"}],
+            "session_id": session_id, "module_id": module_id,
+            "module_title": mod["title"], "module_topics": mod["topics"],
+            "lesson_context": "", "difficulty": difficulty,
+            "updated_difficulty": None, "lesson_adjustment": False,
+            "intent": "lesson", "response": "", "quiz_questions": [],
+        }
+        result  = await graph.ainvoke(state, config=cfg)
+        content = result.get("response", "")
+        if content:
+            async for db in get_db():
+                await db.execute(
+                    "DELETE FROM lessons WHERE module_id = ? AND difficulty = ?",
+                    (module_id, difficulty)
+                )
+                await db.execute(
+                    "INSERT INTO lessons (session_id, module_id, difficulty, content) VALUES (?, ?, ?, ?)",
+                    (session_id, module_id, difficulty, content)
+                )
+                await db.commit()
+                break
+            print(f"Prewarm: module {module_id} cached successfully")
+    except Exception as e:
+        print(f"Prewarm failed for module {module_id}: {e}")
+
+
+async def _prewarm_all(session_id: str, skip_module: int, difficulty: str):
+    """Run all prewarm tasks sequentially to avoid overwhelming Bytez API."""
+    other_modules = [m for m in range(1, 6) if m != skip_module]
+    for module_id in other_modules:
+        await _generate_one(session_id, module_id, difficulty)
+
+
 @router.post("/lesson/prewarm")
-async def prewarm_lessons(body: LessonRequest):
+async def prewarm_lessons(body: LessonRequest, background_tasks: BackgroundTasks):
     """
     Called after first lesson loads — silently generates remaining modules
-    in the background so they're cached and instant when user navigates to them.
+    in the background so they load instantly when user navigates to them.
+    Returns immediately, generation happens in background.
     """
-    from ..services.curriculum import MODULES
-
-    async def generate_one(module_id: int):
-        try:
-            async for db in get_db():
-                rows = await db.execute_fetchall(
-                    "SELECT id FROM lessons WHERE module_id = ? AND difficulty = ? AND generated_at > datetime('now', '-24 hours')",
-                    (module_id, body.difficulty)
-                )
-                if rows:
-                    return  # already cached
-                break
-
-            graph = await get_graph()
-            mod   = get_module(module_id)
-            cfg   = {"configurable": {"thread_id": f"prewarm-{module_id}-{body.difficulty}"}}
-            state = {
-                "messages": [{"role": "user", "content": f"Teach me {mod['title']}"}],
-                "session_id": body.session_id, "module_id": module_id,
-                "module_title": mod["title"], "module_topics": mod["topics"],
-                "lesson_context": "", "difficulty": body.difficulty,
-                "updated_difficulty": None, "lesson_adjustment": False,
-                "intent": "lesson", "response": "", "quiz_questions": [],
-            }
-            result  = await graph.ainvoke(state, config=cfg)
-            content = result.get("response", "")
-            if content:
-                async for db in get_db():
-                    await db.execute("DELETE FROM lessons WHERE module_id = ? AND difficulty = ?", (module_id, body.difficulty))
-                    await db.execute("INSERT INTO lessons (session_id, module_id, difficulty, content) VALUES (?, ?, ?, ?)",
-                        (body.session_id, module_id, body.difficulty, content))
-                    await db.commit()
-                    break
-        except Exception as e:
-            print(f"Prewarm failed for module {module_id}: {e}")
-
-    # Skip current module (already loaded), generate rest in background
-    other_modules = [m for m in range(1, 6) if m != body.module_id]
-    asyncio.create_task(asyncio.gather(*[generate_one(m) for m in other_modules]))
-
-    return {"status": "prewarm started", "modules": other_modules}
+    background_tasks.add_task(
+        _prewarm_all,
+        body.session_id,
+        body.module_id,
+        body.difficulty
+    )
+    return {"status": "prewarm started", "modules": [m for m in range(1, 6) if m != body.module_id]}

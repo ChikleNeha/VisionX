@@ -2,35 +2,23 @@ import { useState, useRef, useCallback } from 'react'
 import axios from 'axios'
 
 // ── Autoplay unlock ────────────────────────────────────────────────────────
-// Browsers block audio.play() until a user gesture has occurred.
-// We store a Promise that resolves once unlock succeeds.
 let _unlockPromise = null
 let _unlocked = false
 
 function _getUnlockPromise() {
   if (_unlocked) return Promise.resolve()
   if (_unlockPromise) return _unlockPromise
-
   const audio = new Audio()
   audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
   audio.volume = 0
-
   _unlockPromise = audio.play()
     .then(() => { audio.pause(); _unlocked = true })
-    .catch(() => {
-      // Gesture not yet received — reset so next gesture retries
-      _unlockPromise = null
-    })
-
+    .catch(() => { _unlockPromise = null })
   return _unlockPromise
 }
 
-// Call on any user gesture — fires the unlock and returns a Promise
-export function unlockAudio() {
-  return _getUnlockPromise()
-}
+export function unlockAudio() { return _getUnlockPromise() }
 
-// Auto-attach to all gesture events so unlock happens on first interaction
 if (typeof window !== 'undefined') {
   const h = () => _getUnlockPromise()
   window.addEventListener('keydown',    h, { capture: true })
@@ -40,29 +28,44 @@ if (typeof window !== 'undefined') {
 }
 // ──────────────────────────────────────────────────────────────────────────
 
-// Module-level speaking flag — readable anywhere without React state
 let _isSpeakingNow = false
 export function isSpeakingNow() { return _isSpeakingNow }
 
-// Wait until audio finishes — polls every 200ms
 export function waitUntilDone(maxWaitMs = 60000) {
   return new Promise(resolve => {
     if (!_isSpeakingNow) { resolve(); return }
     const start = Date.now()
     const check = setInterval(() => {
       if (!_isSpeakingNow || Date.now() - start > maxWaitMs) {
-        clearInterval(check)
-        resolve()
+        clearInterval(check); resolve()
       }
     }, 200)
   })
 }
 
+function splitChunks(text, maxLen = 800) {
+  if (text.length <= maxLen) return [text]
+  const sentences = text.split(/(?<=[।.!?])\s+/)
+  const chunks = []
+  let cur = ''
+  for (const s of sentences) {
+    if ((cur + ' ' + s).trim().length <= maxLen) {
+      cur = (cur + ' ' + s).trim()
+    } else {
+      if (cur) chunks.push(cur)
+      cur = s
+    }
+  }
+  if (cur) chunks.push(cur)
+  return chunks.length ? chunks : [text.slice(0, maxLen)]
+}
+
 export function useTTS() {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [rate, setRate] = useState(1.0)
-  const audioRef  = useRef(null)
-  const abortRef  = useRef(null)
+  const audioRef     = useRef(null)
+  const abortRef     = useRef(null)
+  const cancelledRef = useRef(false)
 
   const _setSpeaking = useCallback((val) => {
     _isSpeakingNow = val
@@ -70,10 +73,14 @@ export function useTTS() {
   }, [])
 
   const stop = useCallback(() => {
+    cancelledRef.current = true
+    // Pause and fully detach current audio element
     if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.src = ''
-      audioRef.current = null
+      const a = audioRef.current
+      audioRef.current = null  // clear ref FIRST so onerror/onended don't fire
+      a.pause()
+      a.src = ''
+      a.load()                 // forces browser to release the media resource
     }
     if (abortRef.current) {
       abortRef.current.abort()
@@ -84,103 +91,108 @@ export function useTTS() {
     setIsSpeaking(false)
   }, [])
 
+  // Play a single blob — creates a fresh Audio element every time
+  const _playBlob = useCallback((blob, currentRate) => new Promise((resolve) => {
+    // Don't start if cancelled
+    if (cancelledRef.current) { resolve(); return }
+
+    const url   = URL.createObjectURL(blob)
+    const audio = new Audio()  // fresh element — no src='' contamination
+
+    audio.playbackRate = Math.max(0.5, Math.min(2.0, currentRate))
+    audioRef.current   = audio
+
+    const cleanup = () => {
+      URL.revokeObjectURL(url)
+      if (audioRef.current === audio) audioRef.current = null
+    }
+
+    audio.onended = () => { cleanup(); resolve() }
+    audio.onerror = () => {
+      const code = audio.error?.code
+      // Code 4 = MEDIA_ELEMENT_ERROR: Empty src — happens on stop(), ignore completely
+      // Code 3 = MEDIA_ERR_DECODE — bad audio data
+      // Code 2 = MEDIA_ERR_NETWORK — network issue
+      if (code && code !== 4) {
+        console.error('[TTS] audio error:', code, audio.error?.message)
+      }
+      cleanup(); resolve()
+    }
+
+    // Set src AFTER attaching listeners
+    audio.src = url
+    audio.load()
+
+    // play() called synchronously here — audio context already unlocked
+    audio.play()
+      .then(() => console.log('[TTS] playing chunk'))
+      .catch(e => {
+        console.error('[TTS] play() failed:', e.name)
+        if (e.name === 'NotAllowedError') {
+          // One retry after short delay
+          setTimeout(() => {
+            if (!cancelledRef.current) {
+              audio.play()
+                .then(() => console.log('[TTS] retry ok'))
+                .catch(() => { cleanup(); resolve() })
+            } else {
+              cleanup(); resolve()
+            }
+          }, 150)
+        } else {
+          cleanup(); resolve()
+        }
+      })
+  }), [])
+
   const speak = useCallback(async (text) => {
     if (!text?.trim()) return
     stop()
+    cancelledRef.current = false
 
-    const controller = new AbortController()
-    abortRef.current = controller
+    const chunks      = splitChunks(text)
+    const currentRate = rate
+    console.log(`[TTS] speaking ${chunks.length} chunk(s), total ${text.length} chars`)
+
     _setSpeaking(true)
 
-    console.log('[TTS] speak() called, text length:', text.length)
+    for (let i = 0; i < chunks.length; i++) {
+      if (cancelledRef.current) break
 
-    try {
-      // Fetch audio bytes from backend
-      const response = await axios.post(
-        '/api/tts',
-        { text, speed: rate },
-        { responseType: 'blob', signal: controller.signal }
-      )
+      const controller = new AbortController()
+      abortRef.current = controller
 
-      if (controller.signal.aborted) return
-
-      const blob = response.data
-      console.log('[TTS] blob received, size:', blob?.size, 'type:', blob?.type)
-
-      if (!blob || blob.size < 100) throw new Error(`TTS blob too small: ${blob?.size}b`)
-
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      audio.playbackRate = Math.max(0.5, Math.min(2.0, rate))
-      audioRef.current = audio
-
-      audio.onended = () => {
-        console.log('[TTS] audio ended')
-        _isSpeakingNow = false
-        setIsSpeaking(false)
-        URL.revokeObjectURL(url)
-        audioRef.current = null
-      }
-      audio.onerror = (e) => {
-        console.error('[TTS] audio element error:', audio.error)
-        _isSpeakingNow = false
-        setIsSpeaking(false)
-        URL.revokeObjectURL(url)
-        audioRef.current = null
-      }
-
-      // ── Wait for unlock to complete BEFORE calling play() ─────────────────
-      // This is the key fix: we await the unlock promise so play() is called
-      // only after the browser has confirmed audio is permitted.
       try {
-        await _getUnlockPromise()
-      } catch {
-        // unlock failed — attempt play anyway, may work if user already interacted
-      }
+        const response = await axios.post(
+          '/api/tts',
+          { text: chunks[i], speed: currentRate },
+          { responseType: 'blob', signal: controller.signal }
+        )
 
-      if (controller.signal.aborted) return
+        if (cancelledRef.current) break
 
-      console.log('[TTS] calling audio.play()...')
-      try {
-        await audio.play()
-        console.log('[TTS] audio.play() succeeded')
-        // speak() resolves here — audio IS playing
-      } catch (playErr) {
-        console.error('[TTS] play() failed:', playErr.name, playErr.message)
-        _isSpeakingNow = false
-        setIsSpeaking(false)
-
-        if (playErr.name === 'NotAllowedError') {
-          // One final retry after a short wait
-          console.log('[TTS] retrying after 200ms...')
-          await new Promise(r => setTimeout(r, 200))
-          if (!controller.signal.aborted) {
-            try {
-              await audio.play()
-              _isSpeakingNow = true
-              setIsSpeaking(true)
-              console.log('[TTS] retry succeeded')
-            } catch (e2) {
-              console.error('[TTS] retry also failed:', e2.message)
-              _setSpeaking(false)
-              URL.revokeObjectURL(url)
-            }
-          }
-        } else {
-          throw playErr
+        const blob = response.data
+        if (!blob || blob.size < 100) {
+          console.warn(`[TTS] chunk ${i + 1} blob too small, skipping`)
+          continue
         }
-      }
 
-    } catch (err) {
-      const cancelled = err.name === 'AbortError'
-                     || err.name === 'CanceledError'
-                     || axios.isCancel(err)
-      if (!cancelled) console.error('[TTS] error:', err.message)
-      else console.log('[TTS] cancelled (intentional stop)')
+        await _playBlob(blob, currentRate)
+
+      } catch (err) {
+        const cancelled = err.name === 'AbortError'
+                       || err.name === 'CanceledError'
+                       || axios.isCancel(err)
+        if (cancelled || cancelledRef.current) break
+        console.error(`[TTS] chunk ${i + 1} fetch failed:`, err.message)
+      }
+    }
+
+    if (!cancelledRef.current) {
       _isSpeakingNow = false
       setIsSpeaking(false)
     }
-  }, [rate, stop, _setSpeaking])
+  }, [rate, stop, _setSpeaking, _playBlob])
 
   return { speak, stop, isSpeaking, rate, setRate }
 }

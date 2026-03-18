@@ -13,14 +13,37 @@ export default function HomePage() {
   const inputRef = useRef(null)
   const audio    = useRef(new Audio()).current
 
+  // Pre-fetch intro audio blob on page load so it's ready when user clicks
+  const preFetchedIntroRef = useRef(null)
+  const INTRO_TEXT = 'Namaste! AccessCode mein swagat hai. Apna naam boliye. Main sun raha hoon.'
+
+  useEffect(() => {
+    // Start fetching in background immediately on mount
+    fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: INTRO_TEXT, speed: 1.0 })
+    })
+      .then(r => r.blob())
+      .then(blob => { preFetchedIntroRef.current = blob })
+      .catch(() => {})   // silent — will fetch again on click if needed
+  }, [])
+
   const speak = (text) => new Promise(async (resolve) => {
     try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, speed: 1.0 })
-      })
-      const blob = await res.blob()
+      // Use pre-fetched blob if text matches intro and blob is ready
+      let blob = null
+      if (text === INTRO_TEXT && preFetchedIntroRef.current) {
+        blob = preFetchedIntroRef.current
+        preFetchedIntroRef.current = null  // use once
+      } else {
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, speed: 1.0 })
+        })
+        blob = await res.blob()
+      }
       const url  = URL.createObjectURL(blob)
       audio.src  = url
       audio.volume = 1
@@ -91,8 +114,8 @@ export default function HomePage() {
 
     p.then(() => {
       audio.volume = 1
-      speak('Namaste! AccessCode mein swagat hai. Apna naam boliye. Main sun raha hoon.')
-        .then(() => openNameMic())
+      // Use pre-fetched blob — should play almost immediately
+      speak(INTRO_TEXT).then(() => openNameMic())
     }).catch(() => {
       audio.volume = 1
       speak('Namaste! Apna naam boliye.')
