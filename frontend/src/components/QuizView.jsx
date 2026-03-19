@@ -30,8 +30,10 @@ export default function QuizView({ onBack }) {
 
   const mod = MODULES.find(m => m.id === currentModule)
 
-  // Keep refs in sync
-  useEffect(() => { stateRef.current = state }, [state])
+  // Keep refs in sync — stateRef is used in keyboard handler to avoid stale closures
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
   useEffect(() => { questionsRef.current = questions }, [questions])
   useEffect(() => { idxRef.current = currentIdx }, [currentIdx])
   useEffect(() => { scoreRef.current = score }, [score])
@@ -101,10 +103,12 @@ export default function QuizView({ onBack }) {
       setWrongTopics([])
       setState(QUIZ_STATES.ACTIVE)
 
-      // Wait for loading message then speak first question
-      await waitUntilDone(8000)
+      // Wait 800ms for TTS to start, then wait for loading message to finish
+      await new Promise(r => setTimeout(r, 800))
+      await waitUntilDone(10000)
       speakAndStore(`Quiz shuru! ${qs.length} sawaal hain. 1, 2, 3, ya 4 dabao jawab dene ke liye.`)
-      await waitUntilDone(8000)
+      await new Promise(r => setTimeout(r, 800))
+      await waitUntilDone(10000)
       speakCurrentQuestion(qs[0], 0)
 
     } catch {
@@ -128,11 +132,19 @@ export default function QuizView({ onBack }) {
 
     setFeedback(feedbackText)
     setState(QUIZ_STATES.FEEDBACK)
-    speakAndStore(feedbackText)
     setAnnouncement(feedbackText)
+    // Stop any playing audio before speaking feedback
+    tts.stop()
+    // Small gap then speak
+    setTimeout(() => speakAndStore(feedbackText), 100)
 
-    // Auto advance after feedback finishes (or 5s max)
-    setTimeout(() => advance(isCorrect), 5000)
+    // Wait for TTS to start (800ms), then wait for it to fully finish
+    // Only then advance — no more cutting off mid-sentence
+    setTimeout(async () => {
+      await new Promise(r => setTimeout(r, 800))  // give TTS time to start
+      await waitUntilDone(30000)                  // wait for full playback
+      advance(isCorrect)
+    }, 0)
   }
 
   const advance = (wasCorrect) => {
@@ -252,15 +264,22 @@ export default function QuizView({ onBack }) {
                 const isSelected = selectedAnswer === label
                 const isCorrect  = label === q.answer
                 let style = 'bg-card border-border text-text hover:border-accent'
+                let inlineStyle = {}
                 if (state === QUIZ_STATES.FEEDBACK) {
-                  if (isCorrect)              style = 'bg-accent/10 border-accent text-accent'
-                  else if (isSelected)        style = 'bg-danger/10 border-danger text-danger'
-                  else                        style = 'bg-card border-border text-muted opacity-50'
+                  if (isCorrect) {
+                    style = 'border-2 text-white font-semibold'
+                    inlineStyle = { background: 'linear-gradient(135deg,#a855f7,#ec4899)', borderColor: '#a855f7' }
+                  } else if (isSelected) {
+                    style = 'bg-danger/20 border-danger text-danger font-semibold'
+                  } else {
+                    style = 'bg-card border-border text-muted opacity-40'
+                  }
                 }
                 return (
                   <button key={label} onClick={() => handleAnswer(label)}
                     disabled={state === QUIZ_STATES.FEEDBACK}
                     aria-pressed={isSelected}
+                    style={inlineStyle}
                     className={`flex items-center gap-4 px-5 py-4 rounded-xl border-2 transition-all duration-200 text-left disabled:cursor-default ${style}`}>
                     <span className="font-mono font-bold text-lg w-8 flex-shrink-0">{i + 1}</span>
                     <span className="font-body text-sm leading-snug">{opt}</span>
@@ -272,10 +291,17 @@ export default function QuizView({ onBack }) {
             </div>
 
             {state === QUIZ_STATES.FEEDBACK && (
-              <div className={`p-4 rounded-xl border animate-slide-up ${selectedAnswer === q.answer ? 'bg-accent/5 border-accent/30 text-accent' : 'bg-danger/5 border-danger/30 text-danger'}`}
+              <div
+                style={selectedAnswer === q.answer
+                  ? { background: 'linear-gradient(135deg,#a855f720,#ec489920)', borderColor: '#a855f7' }
+                  : { background: 'rgba(255,95,95,0.1)', borderColor: '#ff5f5f' }
+                }
+                className="p-4 rounded-xl border-2 animate-slide-up"
                 role="alert" aria-live="assertive">
-                <p className="font-medium text-sm">{feedback}</p>
-                <p className="text-xs opacity-70 mt-1">Agla sawaal aa raha hai...</p>
+                <p className="font-semibold text-sm text-text">
+                  {selectedAnswer === q.answer ? '✅ ' : '❌ '}{feedback}
+                </p>
+                <p className="text-xs text-muted mt-2">Agla sawaal aa raha hai...</p>
               </div>
             )}
 

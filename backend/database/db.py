@@ -2,7 +2,7 @@ import sqlite3
 import aiosqlite
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "accesscode.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "accesscode2.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (

@@ -186,9 +186,12 @@ export default function LessonView({ onStartQuiz }) {
     // Store current lesson context for resume — we'll replay from beginning of current topic
     resumeFromRef.current = lessonContextRef.current
 
-    await tts.speak('Haan bolo, kya poochna hai?')
+    tts.speak('Haan bolo, kya poochna hai?')
+    // Wait 800ms for TTS to start, then wait for it to fully finish
+    await new Promise(r => setTimeout(r, 800))
     await waitUntilDone(8000)
-    await new Promise(r => setTimeout(r, 400))
+    // Extra buffer so mic doesn't catch audio tail
+    await new Promise(r => setTimeout(r, 300))
 
     stt.startListening((transcript) => {
       if (transcript.trim()) {
@@ -201,22 +204,24 @@ export default function LessonView({ onStartQuiz }) {
   // ── Submit question ────────────────────────────────────────────────────────
   const submitQuestion = async (question) => {
     if (!question?.trim()) return
-    cancelledRef.current = false   // new question — reset cancel flag
+    cancelledRef.current = false
     stt.stopListening()
+
+    // Stop ALL audio before starting — no overlap possible
+    tts.stop()
+    browserStop()
+
     setChatHistory(prev => [...prev, { role: 'user', content: question, type: 'question', id: Date.now() }])
     setInterruptInput('')
     setState(STATES.ANSWERING)
+    setStatusMsg('Jawab aa raha hai...')
     setTimeout(scrollToBottom, 50)
-    announceStatus('Sawaal AI ko bheja ja raha hai...')
 
     try {
       const res = await API.chat(sessionId, currentModule, question, difficultyLevel, lessonContextRef.current)
       const { response, updated_difficulty, lesson_adjustment } = res.data
 
       if (updated_difficulty && updated_difficulty !== difficultyLevel) setDifficultyLevel(updated_difficulty)
-
-      announceStatus('Jawab aa gaya! Audio ban rahi hai...')
-      await waitUntilDone(4000)
 
       setChatHistory(prev => [...prev, {
         role: 'assistant', content: response, type: 'answer', id: Date.now(),
@@ -227,30 +232,28 @@ export default function LessonView({ onStartQuiz }) {
       scrollToBottom()
       setTimeout(scrollToBottom, 100)
 
-      // Speak answer — then wait for it to fully finish before resuming
+      // Speak answer — single audio, nothing else playing
       speakAndStore(response)
 
-      // Give TTS 800ms to start fetching+playing before we poll isSpeakingNow
+      // Wait 800ms for TTS fetch to start, then wait for full completion
       await new Promise(r => setTimeout(r, 800))
-      // Now wait for answer audio to fully complete
       await waitUntilDone(60000)
 
-      // Only resume lesson if not cancelled/interrupted again
       if (!cancelledRef.current) {
         setState(STATES.TEACHING)
 
         if (lesson_adjustment) {
-          announceStatus('Lesson update ho rahi hai...')
+          setStatusMsg('Lesson update ho rahi hai...')
           const newLesson = await API.getLesson(sessionId, currentModule, updated_difficulty || difficultyLevel)
           lessonContextRef.current = newLesson.data.content
           setChatHistory(prev => [...prev, {
             role: 'assistant', content: newLesson.data.content, type: 'lesson', id: Date.now()
           }])
+          setStatusMsg('')
           await new Promise(r => setTimeout(r, 800))
           await waitUntilDone(10000)
           speakAndStore(`Lesson resume ho rahi hai. ${newLesson.data.content}`)
         } else {
-          // Resume lesson from where it was interrupted
           const resumeText = resumeFromRef.current || lessonContextRef.current
           if (resumeText) {
             speakAndStore(`Wahan se shuru karte hain jahan ruke the. ${resumeText}`)

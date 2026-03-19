@@ -77,7 +77,7 @@ export default function LearnPage() {
               aria-expanded={sidebarOpen}
               className="btn-ghost text-sm px-3 py-2">☰</button>
             <span className="font-display font-bold text-text text-lg">
-              Access<span className="text-accent">Code</span>
+              Vision<span className="text-gradient">X</span>
             </span>
           </div>
 

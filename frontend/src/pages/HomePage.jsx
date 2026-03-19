@@ -15,7 +15,7 @@ export default function HomePage() {
 
   // Pre-fetch intro audio blob on page load so it's ready when user clicks
   const preFetchedIntroRef = useRef(null)
-  const INTRO_TEXT = 'Namaste! AccessCode mein swagat hai. Apna naam boliye. Main sun raha hoon.'
+  const INTRO_TEXT = 'Namaste! VisionX mein aapka swagat hai. Apna naam boliye. Main sun raha hoon.'
 
   useEffect(() => {
     // Start fetching in background immediately on mount
@@ -148,7 +148,7 @@ export default function HomePage() {
       <div className="relative z-10 w-full max-w-sm text-center space-y-6">
 
         <h1 className="font-display text-5xl font-extrabold text-text mb-2">
-          Access<span className="text-accent">Code</span>
+          Vision<span className="text-gradient">X</span>
         </h1>
         <p className="text-muted text-sm">Python for Everyone — voice-first</p>
 
@@ -163,7 +163,7 @@ export default function HomePage() {
             <button autoFocus onClick={handleStart}
               className="btn-primary w-full text-lg py-4"
               aria-label="Shuru karo — Space ya Enter dabao">
-              🔊 Shuru Karo
+              Start Here
             </button>
           </div>
         )}
